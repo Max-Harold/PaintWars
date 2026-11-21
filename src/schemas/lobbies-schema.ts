@@ -8,6 +8,7 @@ export const lobbiesSchema: CollectionSchema = {
     { name: 'visibility', storage: 'text', interpretation: 'plain', required: true },
     { name: 'maxPlayers', storage: 'number', interpretation: 'plain', required: true },
     { name: 'playerCount', storage: 'number', interpretation: 'plain', required: true },
+    { name: 'durationSeconds', storage: 'number', interpretation: 'plain' },
     { name: 'status', storage: 'text', interpretation: 'plain', required: true },
   ],
   visibilityField: { field: 'visibility', value: 'public' },

@@ -250,3 +250,9 @@
 
 .code-share{display:flex;align-items:center;gap:13px;width:fit-content;margin-top:18px;padding:10px 12px;background:#fffefa;border:1px solid #e1ddd2;border-radius:4px;box-shadow:0 4px 16px #342d1508}.code-share-label{font:9px ui-monospace;letter-spacing:.12em;color:#77796f}.code-share-value{font:800 25px ui-monospace;letter-spacing:.24em;color:#e56547}.copy-code-btn{border:0;border-radius:3px;background:#292c25;color:#fffefa;padding:10px 12px;font:700 9px ui-monospace;letter-spacing:.08em;cursor:pointer;white-space:nowrap}.copy-code-btn:hover{background:#45483f}@media(max-width:720px){.code-share{gap:8px;margin-top:14px;padding:8px}.code-share-value{font-size:21px}.code-share-label{font-size:8px}.copy-code-btn{padding:9px 8px}}
 
+
+.duration-options{grid-template-columns:repeat(3,1fr);margin:8px 0 18px}
+
+
+.bot-play-btn{color:#e56547;font-weight:700;margin-top:13px}
+
