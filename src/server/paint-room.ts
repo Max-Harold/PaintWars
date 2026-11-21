@@ -1,5 +1,5 @@
 import { BaseRoom } from 'deepspace/worker'
-import type { UserAttachment } from 'deepspace/worker'
+import type { ServerMessage, UserAttachment } from 'deepspace/worker'
 
 type PaintAttachment = UserAttachment & {
   paintId: string
@@ -7,8 +7,21 @@ type PaintAttachment = UserAttachment & {
   state: Record<string, unknown>
 }
 
+type PaintServerMessage = ServerMessage | {
+  type: 'presence.sync'
+  payload: { selfId: string; peers: unknown[] }
+}
+
 /** Presence for roller sessions. A server-issued id lets two tabs on one account play separately. */
 export class PaintRoom extends BaseRoom {
+  protected sendTo(ws: WebSocket, message: PaintServerMessage): void {
+    try {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
+    } catch {
+      // The socket may have closed while the room was preparing the message.
+    }
+  }
+
   protected onConnect(ws: WebSocket, user: UserAttachment): PaintAttachment {
     const paintId = crypto.randomUUID()
     const joinedAt = new Date().toISOString()
@@ -24,7 +37,7 @@ export class PaintRoom extends BaseRoom {
 
   protected onMessage(ws: WebSocket, user: UserAttachment, message: { type: string; [key: string]: unknown }): void {
     if (message.type !== 'presence.update') {
-      this.sendTo(ws, { type: 'error', payload: { error: 'Unknown paint-room message.' } })
+      this.sendTo(ws, { type: 'core.error', payload: { error: 'Unknown paint-room message.' } })
       return
     }
     const payload = message.payload
