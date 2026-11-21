@@ -276,14 +276,16 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
   },[isLeader,matchDuration,onLobbyUpdate,room.botCount,selfId,solo,updateState,userName])
   useEffect(()=>{const startFromHost=peers.find(p=>p.state.phase==='playing'&&typeof p.state.startedAt==='number'&&p.state.startedAt!==lastStartRef.current);if(startFromHost&&!running)startRound(startFromHost.state.startedAt as number,startFromHost.state.playerColors as Record<string,string>|undefined,startFromHost.state.roundRoster as RoundPlayer[]|undefined,startFromHost.state.durationSeconds as MatchDuration|undefined)},[peers,running,startRound])
   useEffect(()=>{
-    const finished=peers.find(peer=>peer.state.phase==='finished'&&Array.isArray(peer.state.results))
-    if(!finished||!running)return
+    const finished=peers.find(peer=>peer.state.phase==='finished'&&Array.isArray(peer.state.results)&&typeof peer.state.startedAt==='number')
+    if(!finished)return
+    const finishedStart=finished.state.startedAt as number
+    if(lastStartRef.current!==null&&finishedStart!==lastStartRef.current)return
     const results=finished.state.results as RoundResult[]
     setFinalResults(results);setSeconds(0);setRunning(false)
     const scores=[0,0,0,0]
     for(const result of results)scores[colors.indexOf(result.color)]=Math.round(result.share*ownersRef.current.length/100)
     setShares(scores.map(count=>Math.round(count/ownersRef.current.length*100)))
-  },[peers,running])
+  },[peers])
   useEffect(()=>{if(seconds!==0||running)return;const canvas=canvasRef.current,ctx=canvas?.getContext('2d');if(!ctx||!trailRef.current)return;paintBackground(ctx);ctx.drawImage(trailRef.current,0,0)},[seconds,running])
   useEffect(()=>{
     const setTurn=(event:KeyboardEvent,down:boolean)=>{const key=event.key.toLowerCase();if(key!=='arrowleft'&&key!=='arrowright'&&key!=='a'&&key!=='d')return;event.preventDefault();rollerRef.current.turn=down?(key==='arrowleft'||key==='a'?-1:1):0}
