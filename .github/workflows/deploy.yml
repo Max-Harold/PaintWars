@@ -1,0 +1,78 @@
+name: Paint Wars CI/CD
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paint-wars-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Type check and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Use supported npm version
+        run: npm install --global npm@11
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build app
+        run: npm run build
+
+  deploy:
+    name: Deploy to DeepSpace
+    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Use supported npm version
+        run: npm install --global npm@11
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure DeepSpace CLI session
+        env:
+          DEEPSPACE_SESSION: ${{ secrets.DEEPSPACE_SESSION }}
+        shell: bash
+        run: |
+          if [[ -z "$DEEPSPACE_SESSION" ]]; then
+            echo "::error::Add the DEEPSPACE_SESSION repository secret before deploying."
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.deepspace"
+          printf '%s' "$DEEPSPACE_SESSION" > "$HOME/.deepspace/session"
+          chmod 600 "$HOME/.deepspace/session"
+
+      - name: Deploy
+        run: npx deepspace deploy --json
