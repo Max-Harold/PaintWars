@@ -75,7 +75,7 @@ function electLeader(roomCode: string, departedId: string, members: string[]) {
 }
 
 export default function HomePage() {
-  const { user } = useAuthProfileReady({ requireUser: true })
+  const { user, isSignedIn } = useAuthProfileReady({ requireUser: true })
   const { records: lobbies, status: lobbyStatus } = useQuery<Lobby>('lobbies', { orderBy: 'createdAt', orderDir: 'desc', limit: 40 })
   const { createConfirmed, putConfirmed, removeConfirmed, ready: lobbyWritesReady } = useMutations<Lobby>('lobbies')
   const [room, setRoom] = useState<LobbyRecord | null>(null)
@@ -83,7 +83,7 @@ export default function HomePage() {
   const [isSolo, setIsSolo] = useState(false)
   const [visibility, setVisibility] = useState<'public' | 'private'>('public')
   const [maxPlayers, setMaxPlayers] = useState(4)
-  const [matchDuration, setMatchDuration] = useState<MatchDuration>(60)
+  const [matchDuration, setMatchDuration] = useState<MatchDuration>(30)
   const [botCount, setBotCount] = useState(1)
   const [joinCode, setJoinCode] = useState('')
   const [message, setMessage] = useState('')
@@ -138,7 +138,7 @@ export default function HomePage() {
 
   if (!room) return <LobbyHome userName={user?.name ?? 'PLAYER'} publicLobbies={publicLobbies} lobbyStatus={lobbyStatus} writesReady={lobbyWritesReady} busy={busy} visibility={visibility} setVisibility={setVisibility} maxPlayers={maxPlayers} setMaxPlayers={setMaxPlayers} matchDuration={matchDuration} setMatchDuration={setMatchDuration} botCount={botCount} setBotCount={setBotCount} joinCode={joinCode} setJoinCode={setJoinCode} message={message} onCreate={createRoom} onJoin={joinByCode} onRandom={joinRandom} onPractice={startPractice} />
 
-  return <MatchRoom key={`${room.recordId || room.data.code}`} room={room.data} isHost={isHost} solo={isSolo} userName={user?.name ?? 'PLAYER'} onLeave={leaveRoom} onLobbyUpdate={updateLobby} />
+  return <MatchRoom key={`${room.recordId || room.data.code}`} room={room.data} isHost={isHost} solo={isSolo} authenticated={isSignedIn} userName={user?.name ?? 'PLAYER'} onLeave={leaveRoom} onLobbyUpdate={updateLobby} />
 }
 
 function LobbyHome({ userName, publicLobbies, lobbyStatus, writesReady, busy, visibility, setVisibility, maxPlayers, setMaxPlayers, matchDuration, setMatchDuration, botCount, setBotCount, joinCode, setJoinCode, message, onCreate, onJoin, onRandom, onPractice }: {
@@ -157,8 +157,8 @@ function LobbyHome({ userName, publicLobbies, lobbyStatus, writesReady, busy, vi
     {message&&<p className="lobby-message" role="status">{message}</p>}<footer className="footer"><span>CONTROL THE MOST FLOOR</span><span>PLAY SOLO OR WITH FRIENDS</span></footer></main>
 }
 
-function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { room: Lobby; isHost: boolean; solo: boolean; userName: string; onLeave: (keepLobby?: boolean) => void; onLobbyUpdate: (patch: Partial<Lobby>) => Promise<void> }) {
-  const { peers, connected, selfId, updateState } = usePaintRoom(`paint:${room.code}`)
+function MatchRoom({ room, isHost, solo, authenticated, userName, onLeave, onLobbyUpdate }: { room: Lobby; isHost: boolean; solo: boolean; authenticated: boolean; userName: string; onLeave: (keepLobby?: boolean) => void; onLobbyUpdate: (patch: Partial<Lobby>) => Promise<void> }) {
+  const { peers, connected, selfId, updateState } = usePaintRoom(`paint:${room.code}`, authenticated)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const trailRef = useRef<HTMLCanvasElement | null>(null)
   const ownersRef = useRef(new Int8Array(fieldSize * fieldSize).fill(-1))
@@ -172,9 +172,10 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
   const roundRosterRef = useRef<RoundPlayer[]>([])
   const botStatesRef = useRef<BotState[]>([])
   const lastStartRef = useRef<number | null>(null)
+  const appliedResultStartRef = useRef<number | null>(null)
   const [running, setRunning] = useState(false)
-  const [matchDuration, setMatchDuration] = useState<MatchDuration>(room.durationSeconds ?? 60)
-  const [seconds, setSeconds] = useState<number>(room.durationSeconds ?? 60)
+  const [matchDuration, setMatchDuration] = useState<MatchDuration>(room.durationSeconds ?? 30)
+  const [seconds, setSeconds] = useState<number>(room.durationSeconds ?? 30)
   const [shares, setShares] = useState([0, 0, 0, 0])
   const [finalResults, setFinalResults] = useState<RoundResult[]>([])
   const [copyStatus, setCopyStatus] = useState('COPY CODE')
@@ -184,6 +185,7 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
   const botCount = solo ? room.botCount ?? 0 : 0
   const isLeader = Boolean(selfId && leaderId === selfId)
   const isFull = !solo && peers.length + 1 > room.maxPlayers
+  const roundComplete = !running && finalResults.length > 0
   const soloTitle = botCount ? `SOLO VS ${botCount} BOT${botCount === 1 ? '' : 'S'}` : 'SOLO PRACTICE'
   const soloDescription = botCount ? `Paint against ${botCount} bot${botCount === 1 ? '' : 's'}. Use the left/right arrows or A/D to steer.` : 'Your own endless practice floor.'
   const finishRound = useCallback(() => {
@@ -197,6 +199,7 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
     }))
     setShares(scores.map(count => Math.round(count / ownersRef.current.length * 100)))
     setFinalResults(results)
+    console.info('[PaintWars] Finalized round locally.', { players: results.length })
     setSeconds(0)
     setRunning(false)
     if (isLeader) updateState({ phase: 'finished', results })
@@ -270,7 +273,7 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
     rollerRef.current={x:spawn.x,y:spawn.y,angle:spawn.angle,turn:0,previousX:spawn.x,previousY:spawn.y,lastSentX:spawn.x,lastSentY:spawn.y}
     const roundDuration=sharedDuration??matchDuration
     setMatchDuration(roundDuration)
-    lastStartRef.current=when;setStartedAt(when);setSeconds(Math.max(0,roundDuration-Math.floor((Date.now()-when)/1000)));setRunning(true)
+    lastStartRef.current=when;appliedResultStartRef.current=null;setStartedAt(when);setSeconds(Math.max(0,roundDuration-Math.floor((Date.now()-when)/1000)));setRunning(true)
     if(isLeader&&!solo)void onLobbyUpdate({status:'playing'})
     updateState({phase:'playing',startedAt:when,durationSeconds:roundDuration,playerColors,roundRoster:roster,segment:null,position:spawn})
   },[isLeader,matchDuration,onLobbyUpdate,room.botCount,selfId,solo,updateState,userName])
@@ -280,13 +283,16 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
     if(!finished)return
     const finishedStart=finished.state.startedAt as number
     if(lastStartRef.current!==null&&finishedStart!==lastStartRef.current)return
+    if(appliedResultStartRef.current===finishedStart)return
     const results=finished.state.results as RoundResult[]
+    appliedResultStartRef.current=finishedStart
+    console.info('[PaintWars] Received completed round results from another player.', { players: results.length, startedAt: finishedStart })
     setFinalResults(results);setSeconds(0);setRunning(false)
     const scores=[0,0,0,0]
     for(const result of results)scores[colors.indexOf(result.color)]=Math.round(result.share*ownersRef.current.length/100)
     setShares(scores.map(count=>Math.round(count/ownersRef.current.length*100)))
   },[peers])
-  useEffect(()=>{if(seconds!==0||running)return;const canvas=canvasRef.current,ctx=canvas?.getContext('2d');if(!ctx||!trailRef.current)return;paintBackground(ctx);ctx.drawImage(trailRef.current,0,0)},[seconds,running])
+  useEffect(()=>{if((seconds!==0&&!roundComplete)||running)return;const canvas=canvasRef.current,ctx=canvas?.getContext('2d');if(!ctx||!trailRef.current)return;paintBackground(ctx);ctx.drawImage(trailRef.current,0,0)},[seconds,running,roundComplete])
   useEffect(()=>{
     const setTurn=(event:KeyboardEvent,down:boolean)=>{const key=event.key.toLowerCase();if(key!=='arrowleft'&&key!=='arrowright'&&key!=='a'&&key!=='d')return;event.preventDefault();rollerRef.current.turn=down?(key==='arrowleft'||key==='a'?-1:1):0}
     const down=(e:KeyboardEvent)=>setTurn(e,true),up=(e:KeyboardEvent)=>setTurn(e,false);window.addEventListener('keydown',down);window.addEventListener('keyup',up);return()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up)}
@@ -294,7 +300,7 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
   useEffect(()=>{
     if(!running||seconds<=0)return
     let last=0,ticks=0,raf=0;const canvas=canvasRef.current,trailCanvas=trailRef.current,ctx=canvas?.getContext('2d'),trail=trailCanvas?.getContext('2d');if(!canvas||!ctx||!trail||!trailCanvas)return
-    const animate=(time:number)=>{if(!last)last=time;const dt=Math.min((time-last)/1000,.04);last=time;const p=rollerRef.current;p.angle+=p.turn*3.2*dt;p.x=Math.max(22,Math.min(arenaSize-22,p.x+Math.cos(p.angle)*235*dt));p.y=Math.max(22,Math.min(arenaSize-22,p.y+Math.sin(p.angle)*235*dt))
+    const animate=(time:number)=>{if(!last)last=time;const dt=Math.min((time-last)/1000,.04);last=time;const p=rollerRef.current;p.angle+=p.turn*3.5*dt;p.x=Math.max(22,Math.min(arenaSize-22,p.x+Math.cos(p.angle)*300*dt));p.y=Math.max(22,Math.min(arenaSize-22,p.y+Math.sin(p.angle)*300*dt))
       trail.strokeStyle=color;trail.globalAlpha=.88;trail.lineWidth=31;trail.lineCap='round';trail.beginPath();trail.moveTo(p.previousX,p.previousY);trail.lineTo(p.x,p.y);trail.stroke();trail.globalAlpha=1
       recordPaint(ownersRef.current,{fromX:p.previousX,fromY:p.previousY,x:p.x,y:p.y,color});p.previousX=p.x;p.previousY=p.y
       for(const bot of botStatesRef.current){
@@ -302,8 +308,8 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
         const desired=Math.atan2(bot.targetY-bot.y,bot.targetX-bot.x)
         const turn=((desired-bot.angle+Math.PI*3)%(Math.PI*2))-Math.PI
         bot.angle+=Math.max(-2.35*dt,Math.min(2.35*dt,turn))
-        bot.x=Math.max(22,Math.min(arenaSize-22,bot.x+Math.cos(bot.angle)*205*dt))
-        bot.y=Math.max(22,Math.min(arenaSize-22,bot.y+Math.sin(bot.angle)*205*dt))
+        bot.x=Math.max(22,Math.min(arenaSize-22,bot.x+Math.cos(bot.angle)*265*dt))
+        bot.y=Math.max(22,Math.min(arenaSize-22,bot.y+Math.sin(bot.angle)*265*dt))
         trail.strokeStyle=bot.color;trail.globalAlpha=.88;trail.lineWidth=31;trail.lineCap='round';trail.lineJoin='round';trail.beginPath();trail.moveTo(bot.previousX,bot.previousY);trail.lineTo(bot.x,bot.y);trail.stroke();trail.globalAlpha=1
         recordPaint(ownersRef.current,{fromX:bot.previousX,fromY:bot.previousY,x:bot.x,y:bot.y,color:bot.color})
         bot.previousX=bot.x;bot.previousY=bot.y
@@ -333,7 +339,7 @@ function MatchRoom({ room, isHost, solo, userName, onLeave, onLobbyUpdate }: { r
   const steer=(direction:number)=>{rollerRef.current.turn=direction}
   return <main className="paint-app"><header className="topbar"><button className="back-link" onClick={()=>onLeave()}>← LOBBIES</button><div className="top-actions"><span className={connected?'online-dot':'offline-dot'}/>{connected?'ROOM CONNECTED':'CONNECTING'}</div></header>
     <section className="intro"><div><p className="eyebrow">{solo?soloTitle:`${room.visibility==='public'?'PUBLIC LOBBY':'PRIVATE LOBBY'} · ${Math.min(peers.length+1,room.maxPlayers)}/${room.maxPlayers} ROLLERS`}</p><h1>Paint the <em>whole</em> board.</h1><p className="subhead">{solo?soloDescription:'Invite friends to join. Use the left/right arrows or A/D to steer.'}</p>{!solo&&<div className="code-share"><span className="code-share-label">LOBBY CODE</span><strong className="code-share-value">{room.code}</strong><button className="copy-code-btn" onClick={()=>void copyRoomCode()}>{copyStatus}</button></div>}</div><div className="mode-pill">● &nbsp;{running?'LIVE MATCH':isFull?'ROOM FULL':'WAITING ROOM'}</div></section>
-    <section className="game-layout"><aside className="panel"><p className="label">ROUND STATUS</p><div className="timer">{formatTimer(seconds)}</div><div className="status-line"><span className={connected?'online-dot':'offline-dot'}/>{running?'ROUND IN PROGRESS':seconds===0?'ROUND COMPLETE':'WAITING TO START'}</div><div className="panel-rule"/><p className="label">{seconds===0?'FINAL PAINT SHARE':'PLAYERS IN ROOM'}</p>{seconds===0&&finalResults.length?finalResults.map(result=><div className="score" key={result.id}><span className="swatch" style={{background:result.color}}/><span>{result.name}{result.departed?' (LEFT)':''}</span><b>{result.share}%</b></div>):<><div className="score"><span className="swatch" style={{background:color}}/><span>{userName.split(' ')[0]} (YOU){isLeader?' Â· LEADER':''}</span><b>—</b></div>{peers.map((peer,i)=>{const pos=peer.state.position as Position|undefined;const c=pos?.color??colors[(i+1)%colors.length];return <div className="score" key={peer.userId}><span className="swatch" style={{background:c}}/><span>{peer.userName||`PLAYER ${i+2}`}{peer.userId===leaderId?' Â· LEADER':''}</span><b>—</b></div>})}</>}
-      {isFull&&<p className="room-full" role="status">This lobby is full. Leave and join another room.</p>}{isLeader&&!running&&(seconds===matchDuration||seconds===0)&&<button className="start-btn" disabled={!connected||(!solo&&(peers.length===0||isFull))} onClick={()=>startRound(Date.now())}>{seconds===0?'START NEW GAME':solo?'START PRACTICE':peers.length===0?'WAITING FOR A FRIEND':'START MATCH'} <span>↗</span></button>}{!isLeader&&!solo&&!running&&(seconds===matchDuration||seconds===0)&&<p className="hint">{seconds===0?'The paint stays on the floor. Waiting for the lobby leader to start another game.':peers.length===0?'No leader is visible yet. Check the code, or wait for the leader to reconnect.':'Waiting for the lobby leader to start the match.'}</p>}<p className="hint">Match length: {matchDuration===60?'1 minute':`${matchDuration} seconds`}. Your roller moves continuously. Hold the left/right arrows or A/D to steer. {!solo&&'Trails are shared live with everyone in the room.'}</p><div className="steering"><button aria-label="Steer left" onPointerDown={()=>steer(-1)} onPointerUp={()=>steer(0)} onPointerLeave={()=>steer(0)}>←</button><span>STEER</span><button aria-label="Steer right" onPointerDown={()=>steer(1)} onPointerUp={()=>steer(0)} onPointerLeave={()=>steer(0)}>→</button></div><button className="leave-btn" onClick={()=>onLeave(peers.length>0)}>LEAVE ROOM</button>
+    <section className="game-layout"><aside className="panel"><p className="label">ROUND STATUS</p><div className="timer">{formatTimer(seconds)}</div><div className="status-line"><span className={connected?'online-dot':'offline-dot'}/>{running?'ROUND IN PROGRESS':(roundComplete||seconds===0)?'ROUND COMPLETE':'WAITING TO START'}</div><div className="panel-rule"/><p className="label">{roundComplete||seconds===0?'FINAL PAINT SHARE':'PLAYERS IN ROOM'}</p>{(roundComplete||seconds===0)&&finalResults.length?finalResults.map(result=><div className="score" key={result.id}><span className="swatch" style={{background:result.color}}/><span>{result.name}{result.departed?' (LEFT)':''}</span><b>{result.share}%</b></div>):<><div className="score"><span className="swatch" style={{background:color}}/><span>{userName.split(' ')[0]} (YOU){isLeader?' Â· LEADER':''}</span><b>—</b></div>{peers.map((peer,i)=>{const pos=peer.state.position as Position|undefined;const c=pos?.color??colors[(i+1)%colors.length];return <div className="score" key={peer.userId}><span className="swatch" style={{background:c}}/><span>{peer.userName||`PLAYER ${i+2}`}{peer.userId===leaderId?' Â· LEADER':''}</span><b>—</b></div>})}</>}
+      {isFull&&<p className="room-full" role="status">This lobby is full. Leave and join another room.</p>}{isLeader&&!running&&(roundComplete||seconds===matchDuration||seconds===0)&&<button className="start-btn" disabled={!connected||(!solo&&(peers.length===0||isFull))} onClick={()=>startRound(Date.now())}>{roundComplete||seconds===0?'START NEW GAME':solo?'START PRACTICE':peers.length===0?'WAITING FOR A FRIEND':'START MATCH'} <span>↗</span></button>}{!isLeader&&!solo&&!running&&(roundComplete||seconds===matchDuration||seconds===0)&&<p className="hint">{roundComplete||seconds===0?'The paint stays on the floor. Waiting for the lobby leader to start another game.':peers.length===0?'No leader is visible yet. Check the code, or wait for the leader to reconnect.':'Waiting for the lobby leader to start the match.'}</p>}<p className="hint">Match length: {matchDuration===60?'1 minute':`${matchDuration} seconds`}. Your roller moves continuously. Hold the left/right arrows or A/D to steer. {!solo&&'Trails are shared live with everyone in the room.'}</p><div className="steering"><button aria-label="Steer left" onPointerDown={()=>steer(-1)} onPointerUp={()=>steer(0)} onPointerLeave={()=>steer(0)}>←</button><span>STEER</span><button aria-label="Steer right" onPointerDown={()=>steer(1)} onPointerUp={()=>steer(0)} onPointerLeave={()=>steer(0)}>→</button></div><button className="leave-btn" onClick={()=>onLeave(peers.length>0)}>LEAVE ROOM</button>
     </aside><div className="board-wrap"><div className="board-head"><span>● &nbsp;ROLLER ARENA <small>· LIVE PAINT SYNC</small></span><span>ROUND 01</span></div><div className="arena-frame"><canvas ref={canvasRef} width={arenaSize} height={arenaSize} className="arena-canvas" aria-label="Multiplayer paint arena. Rollers move automatically and players steer with left/right arrows or A/D."/></div><div className="board-foot"><span>↖ ROLL TO PAINT</span><span>CLAIM THE FLOOR TO WIN ↗</span></div></div></section><footer className="footer"><span>LEFT / RIGHT ARROWS OR A / D TO STEER</span><span>MOST OF THE FLOOR WINS</span></footer></main>
 }

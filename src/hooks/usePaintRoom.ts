@@ -12,7 +12,7 @@ export interface PaintPeer {
 type PaintMessage = { type: string; payload?: Record<string, unknown> }
 
 /** Game-scoped presence: verified accounts may open more than one roller session. */
-export function usePaintRoom(scopeId: string) {
+export function usePaintRoom(scopeId: string, shouldAuthenticate: boolean) {
   const [peers, setPeers] = useState<PaintPeer[]>([])
   const [connected, setConnected] = useState(false)
   const [selfId, setSelfId] = useState<string | null>(null)
@@ -31,16 +31,27 @@ export function usePaintRoom(scopeId: string) {
     let alive = true
     let retry: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | null = null
+    let retryAttempt = 0
+    let authWarningShown = false
+    let authTokenRetryAfter = 0
     const connect = async () => {
       try {
-        const token = await getAuthToken()
+        const token = shouldAuthenticate && Date.now() >= authTokenRetryAfter ? await getAuthToken() : null
         if (!alive) return
+        if (shouldAuthenticate && !token) {
+          if (!authWarningShown) console.warn('[PaintWars] DeepSpace did not provide an auth token for the paint room. The room will try an anonymous connection and retry auth in 30 seconds; check the browser session if this is unexpected.')
+          authWarningShown = true
+          authTokenRetryAfter = Date.now() + 30_000
+        } else {
+          authWarningShown = false
+          authTokenRetryAfter = 0
+        }
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const url = new URL(`/ws/paint/${encodeURIComponent(scopeId)}`, `${protocol}//${window.location.host}`)
         if (token) url.searchParams.set('token', token)
         socket = new WebSocket(url.toString())
         socketRef.current = socket
-        socket.onopen = () => { if (alive) setConnected(true) }
+        socket.onopen = () => { if (alive) { retryAttempt = 0; setConnected(true) } }
         socket.onmessage = (event: MessageEvent<string>) => {
           let message: PaintMessage
           try { message = JSON.parse(event.data) as PaintMessage } catch { return }
@@ -61,16 +72,26 @@ export function usePaintRoom(scopeId: string) {
           } else if (message.type === 'presence.leave') {
             const id = payload.userId
             if (typeof id === 'string') setPeers(current => current.filter(peer => peer.userId !== id))
+          } else if (message.type === 'core.error') {
+            console.error('[PaintWars] Paint room rejected a message:', payload.error ?? payload)
           }
         }
-        socket.onclose = () => {
+        socket.onclose = (event: CloseEvent) => {
           if (!alive) return
           setConnected(false); setSelfId(null); setPeers([])
-          retry = setTimeout(() => void connect(), 1000)
+          retryAttempt++
+          const retryDelay = Math.min(1000 * 2 ** Math.min(retryAttempt - 1, 4), 15000)
+          console.warn(`[PaintWars] Paint room disconnected (code ${event.code}${event.reason ? `, ${event.reason}` : ''}, clean: ${event.wasClean}); reconnecting in ${retryDelay} ms.`)
+          retry = setTimeout(() => void connect(), retryDelay)
         }
-        socket.onerror = () => socket?.close()
+        socket.onerror = () => { console.error('[PaintWars] Paint room WebSocket failed; see the Network panel for the request status and response.'); socket?.close() }
       } catch {
-        if (alive) retry = setTimeout(() => void connect(), 1500)
+        if (alive) {
+          retryAttempt++
+          const retryDelay = Math.min(1000 * 2 ** Math.min(retryAttempt - 1, 4), 15000)
+          console.error(`[PaintWars] Could not open the paint room; retrying in ${retryDelay} ms.`)
+          retry = setTimeout(() => void connect(), retryDelay)
+        }
       }
     }
     void connect()
@@ -80,7 +101,7 @@ export function usePaintRoom(scopeId: string) {
       if (socket) { socket.onclose = null; socket.close() }
       socketRef.current = null
     }
-  }, [scopeId])
+  }, [scopeId, shouldAuthenticate])
 
   return { peers, connected, selfId, updateState }
 }
